@@ -1,1 +1,0 @@
-src && make ARCH=x86 DEBUG=1
