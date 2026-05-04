@@ -1,0 +1,185 @@
+/*
+ * sysmond — сервис системного профилирования для ЗОСРВ "Нейтрино".
+ *
+ * Регистрирует /dev/sysmon, периодически опрашивает /proc, складывает
+ * метрики в кольцевой буфер. Клиенты получают данные через devctl.
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <signal.h>
+#include <errno.h>
+
+#include "ringbuf.h"
+#include "collector.h"
+#include "resmgr_handler.h"
+#include "../common/sysmon_protocol.h"
+
+#define DEFAULT_POLL_MS         1000
+#define DEFAULT_HISTORY_HOURS     24
+#define DEFAULT_MAX_THREADS        8
+#define DEFAULT_COLLECTOR_PRIO    10
+
+#define SYSMOND_LOG_PATH    "/var/log/sysmond.log"
+
+static void daemonize(const char *log_path)
+{
+    pid_t pid = fork();
+    if (pid < 0) {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    }
+    if (pid > 0) {
+        exit(EXIT_SUCCESS);
+    }
+
+    if (setsid() < 0) {
+        perror("setsid");
+        exit(EXIT_FAILURE);
+    }
+
+    freopen("/dev/null", "r", stdin);
+
+    
+    if (!freopen(log_path, "a", stdout)) {
+        freopen("/dev/null", "w", stdout);
+    }
+    if (!freopen(log_path, "a", stderr)) {
+        freopen("/dev/null", "w", stderr);
+    }
+    setvbuf(stderr, NULL, _IOLBF, 0);
+}
+
+static void print_usage(const char *prog)
+{
+    fprintf(stderr,
+        "Использование: %s [опции]\n"
+        "\n"
+        "Сервис системного профилирования ЗОСРВ \"Нейтрино\".\n"
+        "Регистрирует устройство %s\n"
+        "\n"
+        "Опции:\n"
+        "  -p <мс>    Период опроса, мс         (по умолч. %d)\n"
+        "  -H <ч>     Глубина истории, часы      (по умолч. %d)\n"
+        "  -t <N>     Макс. число потоков        (по умолч. %d)\n"
+        "  -P <prio>  Приоритет коллектора       (по умолч. %d)\n"
+        "  -f         Не уходить в фон\n"
+        "  -h         Показать эту справку\n"
+        "\n"
+        "В режиме демона лог пишется в %s\n",
+        prog, SYSMON_DEVICE_PATH,
+        DEFAULT_POLL_MS, DEFAULT_HISTORY_HOURS,
+        DEFAULT_MAX_THREADS, DEFAULT_COLLECTOR_PRIO,
+        SYSMOND_LOG_PATH);
+}
+
+int main(int argc, char *argv[])
+{
+    int      foreground = 0;
+    uint32_t poll_ms    = DEFAULT_POLL_MS;
+    uint32_t hist_h     = DEFAULT_HISTORY_HOURS;
+    uint32_t max_thr    = DEFAULT_MAX_THREADS;
+    uint32_t col_prio   = DEFAULT_COLLECTOR_PRIO;
+
+    int opt;
+    while ((opt = getopt(argc, argv, "p:H:t:P:fh")) != -1) {
+        switch (opt) {
+        case 'p': poll_ms    = (uint32_t)atoi(optarg); break;
+        case 'H': hist_h     = (uint32_t)atoi(optarg); break;
+        case 't': max_thr    = (uint32_t)atoi(optarg); break;
+        case 'P': col_prio   = (uint32_t)atoi(optarg); break;
+        case 'f': foreground = 1;                      break;
+        case 'h':
+            print_usage(argv[0]);
+            return EXIT_SUCCESS;
+        default:
+            print_usage(argv[0]);
+            return EXIT_FAILURE;
+        }
+    }
+
+    if (poll_ms < 10 || poll_ms > 60000) {
+        fprintf(stderr, "Ошибка: период опроса должен быть 10..60000 мс\n");
+        return EXIT_FAILURE;
+    }
+    if (hist_h < 1 || hist_h > 168) {
+        fprintf(stderr, "Ошибка: глубина истории должна быть 1..168 часов\n");
+        return EXIT_FAILURE;
+    }
+    if (max_thr < 1 || max_thr > 256) {
+        fprintf(stderr, "Ошибка: max_threads должно быть 1..256\n");
+        return EXIT_FAILURE;
+    }
+
+    uint32_t samples_per_hour = 3600u * 1000u / poll_ms;
+    uint32_t capacity         = max_thr * hist_h * samples_per_hour;
+    size_t   mem_bytes        = (size_t)capacity * sizeof(sysmon_record_t);
+
+    if (!foreground) {
+        daemonize(SYSMOND_LOG_PATH);
+    }
+
+    fprintf(stderr,
+        "sysmond: period=%u мс, history=%u ч, max_threads=%u\n"
+        "sysmond: буфер %u записей × %zu байт = %.1f МБ\n"
+        "sysmond: устройство %s\n",
+        poll_ms, hist_h, max_thr,
+        capacity, sizeof(sysmon_record_t),
+        (double)mem_bytes / (1024.0 * 1024.0),
+        SYSMON_DEVICE_PATH);
+
+    signal(SIGTERM, SIG_DFL);
+    signal(SIGINT,  SIG_DFL);
+
+    ringbuf_t rb;
+    fprintf(stderr, "[1/4] Инициализация кольцевого буфера... ");
+    if (ringbuf_init(&rb, capacity) != 0) {
+        fprintf(stderr, "FAIL\n");
+        perror("ringbuf_init");
+        return EXIT_FAILURE;
+    }
+    fprintf(stderr, "OK\n");
+
+    fprintf(stderr, "[2/4] Запуск потока коллектора... ");
+    collector_config_t col_cfg = {
+        .poll_period_ms = poll_ms,
+        .collector_prio = col_prio,
+        .ringbuf        = &rb,
+    };
+    collector_state_t *cs = collector_start(&col_cfg);
+    if (!cs) {
+        fprintf(stderr, "FAIL\n");
+        perror("collector_start");
+        ringbuf_destroy(&rb);
+        return EXIT_FAILURE;
+    }
+    fprintf(stderr, "OK\n");
+
+    fprintf(stderr, "[3/4] Регистрация %s... ", SYSMON_DEVICE_PATH);
+    sysmon_config_t sysmon_cfg = {
+        .poll_period_ms = poll_ms,
+        .history_hours  = hist_h,
+        .max_threads    = max_thr,
+        .collector_prio = col_prio,
+    };
+    resmgr_ctx_t *rm = resmgr_init(&rb, cs, &sysmon_cfg);
+    if (!rm) {
+        fprintf(stderr, "FAIL\n");
+        perror("resmgr_init");
+        collector_stop(cs);
+        ringbuf_destroy(&rb);
+        return EXIT_FAILURE;
+    }
+    fprintf(stderr, "OK\n");
+
+    fprintf(stderr, "[4/4] Сервис готов.\n");
+    resmgr_run(rm);
+
+    resmgr_shutdown(rm);
+    collector_stop(cs);
+    ringbuf_destroy(&rb);
+
+    return EXIT_SUCCESS;
+}
