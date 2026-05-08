@@ -320,11 +320,13 @@ static int cmd_history(int argc, char *argv[])
 }
 
 /*
- * cpuns <pid> — вывести "<snapshot_timestamp_ns> <cpu_time_ns>"
+ * cpuns <pid> — вывести "<poll_timestamp_ns> <cpu_time_ns> <thread_count>"
  *
- * Возвращает сумму sutime_ns всех потоков указанного процесса
- * из последнего собранного снимка. Используется bench.sh для
- * вычисления CPU% с наносекундной точностью.
+ * Возвращает сумму sutime_ns всех потоков указанного процесса из
+ * последнего собранного снимка. timestamp — момент опроса (одинаковый
+ * для всех записей этого опроса), а не время обработки запроса; это
+ * важно для bench.sh, где разница (wall) и (cpu) должны быть взяты
+ * из одной временной шкалы.
  */
 static int cmd_cpuns(int argc, char *argv[])
 {
@@ -351,16 +353,27 @@ static int cmd_cpuns(int argc, char *argv[])
     }
     close(fd);
 
-    uint64_t total_ns = 0;
+    uint64_t total_ns      = 0;
+    uint64_t poll_ts       = 0;
+    uint32_t matched_count = 0;
+
     for (uint32_t i = 0; i < snap.count; i++) {
         if (snap.records[i].pid == target_pid) {
             total_ns += snap.records[i].sutime_ns;
+            poll_ts   = snap.records[i].timestamp_ns;
+            matched_count++;
         }
     }
 
-    printf("%llu %llu\n",
-           (unsigned long long)snap.timestamp_ns,
-           (unsigned long long)total_ns);
+    if (matched_count == 0) {
+        fprintf(stderr, "PID %d не найден в последнем снимке\n", (int)target_pid);
+        return 1;
+    }
+
+    printf("%llu %llu %u\n",
+           (unsigned long long)poll_ts,
+           (unsigned long long)total_ns,
+           matched_count);
     return 0;
 }
 
