@@ -49,4 +49,18 @@ void ringbuf_get_stats(ringbuf_t *rb,
                        uint64_t  *out_total_written,
                        uint64_t  *out_total_dropped);
 
+/*
+ * Сохранить содержимое буфера в файл бинарного формата.
+ * Формат: [магическое число "SYSMON" + версия + count + records...]
+ * Возвращает 0 при успехе, -1 при ошибке (errno установлен).
+ */
+int ringbuf_dump_to_file(ringbuf_t *rb, const char *path);
+
+/*
+ * Загрузить содержимое из ранее сохранённого файла.
+ * Записи добавляются в буфер обычным write (с возможной перезаписью
+ * старых, если буфер мал). Возвращает число загруженных записей или -1.
+ */
+int ringbuf_load_from_file(ringbuf_t *rb, const char *path);
+
 #endif /* SYSMON_RINGBUF_H */

@@ -1,6 +1,7 @@
 #include "ringbuf.h"
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <errno.h>
 
@@ -159,4 +160,108 @@ void ringbuf_get_stats(ringbuf_t *rb,
     if (out_total_written) *out_total_written = rb->total_written;
     if (out_total_dropped) *out_total_dropped = rb->total_dropped;
     pthread_mutex_unlock(&rb->mutex);
+}
+
+/*
+ * Формат файла-дампа:
+ *   offset  size   field
+ *   0       8      magic         = "SYSMOND\0"
+ *   8       4      version       = 1
+ *   12      4      record_size   = sizeof(sysmon_record_t)
+ *   16      4      count         (число записей)
+ *   20      4      reserved      = 0
+ *   24      N*sz   records       (записи в хронологическом порядке)
+ */
+
+#define DUMP_MAGIC    "SYSMOND\0"
+#define DUMP_VERSION  1
+#define DUMP_HDR_SIZE 24
+
+int ringbuf_dump_to_file(ringbuf_t *rb, const char *path)
+{
+    if (!rb || !path) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    FILE *f = fopen(path, "wb");
+    if (!f) return -1;
+
+    pthread_mutex_lock(&rb->mutex);
+
+    uint32_t version = DUMP_VERSION;
+    uint32_t rec_sz  = (uint32_t)sizeof(sysmon_record_t);
+    uint32_t count   = rb->count;
+    uint32_t zero    = 0;
+
+    if (fwrite(DUMP_MAGIC, 1, 8, f) != 8 ||
+        fwrite(&version,  4, 1, f) != 1 ||
+        fwrite(&rec_sz,   4, 1, f) != 1 ||
+        fwrite(&count,    4, 1, f) != 1 ||
+        fwrite(&zero,     4, 1, f) != 1)
+    {
+        pthread_mutex_unlock(&rb->mutex);
+        fclose(f);
+        return -1;
+    }
+
+    /* Записи в хронологическом порядке: от хвоста к голове */
+    uint32_t tail = (rb->head + rb->capacity - rb->count) % rb->capacity;
+    for (uint32_t i = 0; i < rb->count; i++) {
+        uint32_t slot = (tail + i) % rb->capacity;
+        if (fwrite(&rb->records[slot], rec_sz, 1, f) != 1) {
+            pthread_mutex_unlock(&rb->mutex);
+            fclose(f);
+            return -1;
+        }
+    }
+
+    pthread_mutex_unlock(&rb->mutex);
+    fclose(f);
+    return 0;
+}
+
+int ringbuf_load_from_file(ringbuf_t *rb, const char *path)
+{
+    if (!rb || !path) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+
+    char     magic[8];
+    uint32_t version, rec_sz, count, reserved;
+
+    if (fread(magic,    1, 8, f) != 8 ||
+        fread(&version, 4, 1, f) != 1 ||
+        fread(&rec_sz,  4, 1, f) != 1 ||
+        fread(&count,   4, 1, f) != 1 ||
+        fread(&reserved,4, 1, f) != 1)
+    {
+        fclose(f);
+        errno = EIO;
+        return -1;
+    }
+
+    if (memcmp(magic, DUMP_MAGIC, 8) != 0 ||
+        version != DUMP_VERSION ||
+        rec_sz  != sizeof(sysmon_record_t))
+    {
+        fclose(f);
+        errno = EILSEQ;
+        return -1;
+    }
+
+    sysmon_record_t rec;
+    int loaded = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        if (fread(&rec, sizeof(rec), 1, f) != 1) break;
+        ringbuf_write(rb, &rec);
+        loaded++;
+    }
+
+    fclose(f);
+    return loaded;
 }

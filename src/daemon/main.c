@@ -3,6 +3,10 @@
  *
  * Регистрирует /dev/sysmon, периодически опрашивает /proc, складывает
  * метрики в кольцевой буфер. Клиенты получают данные через devctl.
+ *
+ * При корректном завершении (SIGTERM / SIGINT) содержимое буфера
+ * сохраняется в файл-дамп. При следующем запуске история подгружается
+ * обратно, обеспечивая непрерывность наблюдения через рестарты.
  */
 
 #include <stdio.h>
@@ -11,6 +15,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <errno.h>
+#include <sys/stat.h>
 
 #include "ringbuf.h"
 #include "collector.h"
@@ -22,7 +27,27 @@
 #define DEFAULT_MAX_THREADS        8
 #define DEFAULT_COLLECTOR_PRIO    10
 
-#define SYSMOND_LOG_PATH    "/var/log/sysmond.log"
+#define SYSMOND_LOG_PATH        "/var/log/sysmond.log"
+#define SYSMOND_DUMP_PATH       "/var/log/sysmond_history.bin"
+
+/*
+ * Глобальные указатели на ring-буфер и путь дампа — нужны обработчику
+ * сигнала, чтобы корректно сохранить буфер при завершении.
+ */
+static ringbuf_t   *g_rb        = NULL;
+static const char  *g_dump_path = SYSMOND_DUMP_PATH;
+static volatile sig_atomic_t g_should_stop = 0;
+
+static void on_terminate(int sig)
+{
+    (void)sig;
+    g_should_stop = 1;
+    /*
+     * Сохранение делается в основном потоке после выхода из resmgr_run().
+     * В обработчике сигнала вызовы fwrite/fopen формально не safe,
+     * поэтому только взводим флаг.
+     */
+}
 
 static void daemonize(const char *log_path)
 {
@@ -41,8 +66,6 @@ static void daemonize(const char *log_path)
     }
 
     freopen("/dev/null", "r", stdin);
-
-    
     if (!freopen(log_path, "a", stdout)) {
         freopen("/dev/null", "w", stdout);
     }
@@ -65,32 +88,42 @@ static void print_usage(const char *prog)
         "  -H <ч>     Глубина истории, часы      (по умолч. %d)\n"
         "  -t <N>     Макс. число потоков        (по умолч. %d)\n"
         "  -P <prio>  Приоритет коллектора       (по умолч. %d)\n"
+        "  -l <путь>  Файл дампа истории         (по умолч. %s)\n"
+        "  -L         Отключить дамп истории при завершении\n"
+        "  -N         Не загружать историю при старте\n"
         "  -f         Не уходить в фон\n"
         "  -h         Показать эту справку\n"
         "\n"
-        "В режиме демона лог пишется в %s\n",
+        "В режиме демона лог пишется в %s\n"
+        "Дамп истории — бинарный формат с заголовком \"SYSMOND\\0\" + версия + записи\n",
         prog, SYSMON_DEVICE_PATH,
         DEFAULT_POLL_MS, DEFAULT_HISTORY_HOURS,
         DEFAULT_MAX_THREADS, DEFAULT_COLLECTOR_PRIO,
-        SYSMOND_LOG_PATH);
+        SYSMOND_DUMP_PATH, SYSMOND_LOG_PATH);
 }
 
 int main(int argc, char *argv[])
 {
-    int      foreground = 0;
-    uint32_t poll_ms    = DEFAULT_POLL_MS;
-    uint32_t hist_h     = DEFAULT_HISTORY_HOURS;
-    uint32_t max_thr    = DEFAULT_MAX_THREADS;
-    uint32_t col_prio   = DEFAULT_COLLECTOR_PRIO;
+    int         foreground   = 0;
+    int         dump_disabled = 0;
+    int         load_disabled = 0;
+    uint32_t    poll_ms      = DEFAULT_POLL_MS;
+    uint32_t    hist_h       = DEFAULT_HISTORY_HOURS;
+    uint32_t    max_thr      = DEFAULT_MAX_THREADS;
+    uint32_t    col_prio     = DEFAULT_COLLECTOR_PRIO;
+    const char *dump_path    = SYSMOND_DUMP_PATH;
 
     int opt;
-    while ((opt = getopt(argc, argv, "p:H:t:P:fh")) != -1) {
+    while ((opt = getopt(argc, argv, "p:H:t:P:l:LNfh")) != -1) {
         switch (opt) {
         case 'p': poll_ms    = (uint32_t)atoi(optarg); break;
         case 'H': hist_h     = (uint32_t)atoi(optarg); break;
         case 't': max_thr    = (uint32_t)atoi(optarg); break;
         case 'P': col_prio   = (uint32_t)atoi(optarg); break;
-        case 'f': foreground = 1;                      break;
+        case 'l': dump_path     = optarg;              break;
+        case 'L': dump_disabled = 1;                   break;
+        case 'N': load_disabled = 1;                   break;
+        case 'f': foreground    = 1;                   break;
         case 'h':
             print_usage(argv[0]);
             return EXIT_SUCCESS;
@@ -124,14 +157,19 @@ int main(int argc, char *argv[])
     fprintf(stderr,
         "sysmond: period=%u мс, history=%u ч, max_threads=%u\n"
         "sysmond: буфер %u записей × %zu байт = %.1f МБ\n"
-        "sysmond: устройство %s\n",
+        "sysmond: устройство %s\n"
+        "sysmond: дамп %s\n",
         poll_ms, hist_h, max_thr,
         capacity, sizeof(sysmon_record_t),
         (double)mem_bytes / (1024.0 * 1024.0),
-        SYSMON_DEVICE_PATH);
+        SYSMON_DEVICE_PATH,
+        dump_disabled ? "отключён" : dump_path);
 
-    signal(SIGTERM, SIG_DFL);
-    signal(SIGINT,  SIG_DFL);
+    /* Сигналы — graceful shutdown */
+    struct sigaction sa = {0};
+    sa.sa_handler = on_terminate;
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGINT,  &sa, NULL);
 
     ringbuf_t rb;
     fprintf(stderr, "[1/4] Инициализация кольцевого буфера... ");
@@ -141,6 +179,24 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
     fprintf(stderr, "OK\n");
+    g_rb        = &rb;
+    g_dump_path = dump_path;
+
+    /* Подгружаем дамп предыдущего запуска, если есть */
+    if (!load_disabled) {
+        struct stat st;
+        if (stat(dump_path, &st) == 0) {
+            int loaded = ringbuf_load_from_file(&rb, dump_path);
+            if (loaded > 0) {
+                fprintf(stderr,
+                    "[+] Подгружено %d записей из %s\n", loaded, dump_path);
+            } else if (loaded == -1) {
+                fprintf(stderr,
+                    "[!] Не удалось подгрузить %s: %s\n",
+                    dump_path, strerror(errno));
+            }
+        }
+    }
 
     fprintf(stderr, "[2/4] Запуск потока коллектора... ");
     collector_config_t col_cfg = {
@@ -176,6 +232,16 @@ int main(int argc, char *argv[])
 
     fprintf(stderr, "[4/4] Сервис готов.\n");
     resmgr_run(rm);
+
+    /* Сохранение буфера на диск перед завершением */
+    if (!dump_disabled) {
+        fprintf(stderr, "Сохранение истории в %s... ", dump_path);
+        if (ringbuf_dump_to_file(&rb, dump_path) == 0) {
+            fprintf(stderr, "OK\n");
+        } else {
+            fprintf(stderr, "FAIL: %s\n", strerror(errno));
+        }
+    }
 
     resmgr_shutdown(rm);
     collector_stop(cs);
