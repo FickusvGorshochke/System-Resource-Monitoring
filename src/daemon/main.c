@@ -41,12 +41,10 @@ static volatile sig_atomic_t g_should_stop = 0;
 static void on_terminate(int sig)
 {
     (void)sig;
+    /* Signal-safe вывод (write — async-signal-safe по POSIX) */
+    static const char msg[] = "[signal: on_terminate]\n";
+    write(2, msg, sizeof(msg) - 1);
     g_should_stop = 1;
-    /*
-     * Сохранение делается в основном потоке после выхода из resmgr_run().
-     * В обработчике сигнала вызовы fwrite/fopen формально не safe,
-     * поэтому только взводим флаг.
-     */
 }
 
 static void daemonize(const char *log_path)
@@ -235,14 +233,22 @@ int main(int argc, char *argv[])
     fprintf(stderr, "[4/4] Сервис готов.\n");
     resmgr_run(rm);
 
+    /* Маркер: вернулись из resmgr_run (signal-safe write до fflush) */
+    {
+        static const char msg[] = "[resmgr_run returned]\n";
+        write(2, msg, sizeof(msg) - 1);
+    }
+
     /* Сохранение буфера на диск перед завершением */
     if (!dump_disabled) {
         fprintf(stderr, "Сохранение истории в %s... ", dump_path);
+        fflush(stderr);
         if (ringbuf_dump_to_file(&rb, dump_path) == 0) {
             fprintf(stderr, "OK\n");
         } else {
             fprintf(stderr, "FAIL: %s\n", strerror(errno));
         }
+        fflush(stderr);
     }
 
     resmgr_shutdown(rm);
