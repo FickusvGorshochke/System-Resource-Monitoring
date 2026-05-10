@@ -73,16 +73,43 @@ get_record_count() {
 
 # ---- 1. Очистка состояния -------------------------------------------
 step "1. Очистка предыдущего состояния"
-echo "Останавливаем sysmond (если был запущен)..."
-ssh "$QNX_HOST" "kill -TERM \$(pidin -F '%a %N' 2>/dev/null \
-    | awk '\$2 == \"sysmond\" {print \$1; exit}') 2>/dev/null; sleep 2"
+
+# Цикл: пытаемся остановить через TERM, проверяем, повторяем
+for attempt in 1 2 3 4 5; do
+    OLD_PID=$(get_sysmond_pid)
+    if [ -z "$OLD_PID" ]; then
+        echo "sysmond не запущен — OK"
+        break
+    fi
+    echo "Попытка $attempt: PID = $OLD_PID, посылаем SIGTERM..."
+    ssh "$QNX_HOST" "kill -TERM $OLD_PID" 2>/dev/null
+    sleep 2
+done
+
+# Если после 5 попыток всё ещё жив — значит handler не работает,
+# тестировать дамп бесполезно. Прекращаем.
+LEFT_PID=$(get_sysmond_pid)
+if [ -n "$LEFT_PID" ]; then
+    echo
+    echo "ОШИБКА: sysmond (PID $LEFT_PID) не реагирует на SIGTERM."
+    echo "Возможные причины:"
+    echo "  - старый бинарник без обработчика сигналов"
+    echo "  - sigaction в sysmond не зарегистрировался"
+    echo "Принудительный останов через SIGKILL (без сохранения дампа):"
+    ssh "$QNX_HOST" "kill -KILL $LEFT_PID 2>/dev/null; sleep 1"
+    if [ -n "$(get_sysmond_pid)" ]; then
+        echo "Даже SIGKILL не работает — попробуй вручную."
+        exit 1
+    fi
+    echo "Процесс убит. Тест продолжать смысла нет — handler не работает."
+    exit 1
+fi
 
 echo "Удаляем старый дамп..."
 ssh "$QNX_HOST" "rm -f $DUMP_PATH"
 
 echo "Проверка состояния перед стартом:"
 ssh "$QNX_HOST" "ls $DUMP_PATH 2>&1 | head -3"
-ssh "$QNX_HOST" "pidin | grep sysmond || echo 'sysmond не запущен'"
 
 # ---- 2. Чистый запуск -----------------------------------------------
 step "2. Запуск sysmond с опцией -N (не загружать прошлый дамп)"
@@ -110,18 +137,25 @@ ssh "$QNX_HOST" "/usr/bin/sysmon_cli stats 2>/dev/null"
 step "4. Корректное завершение через SIGTERM"
 echo "Посылаем SIGTERM в PID $PID_BEFORE..."
 ssh "$QNX_HOST" "kill -TERM $PID_BEFORE"
-sleep 2
 
-if [ -n "$(get_sysmond_pid)" ]; then
-    echo "ВНИМАНИЕ: sysmond ещё жив через 2 сек, повторяем..."
-    sleep 2
-fi
+# Ждём до 10 секунд завершения
+TERMINATED=0
+for waited in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 1
+    if [ -z "$(get_sysmond_pid)" ]; then
+        echo "sysmond завершён за $waited секунд."
+        TERMINATED=1
+        break
+    fi
+done
 
-if [ -n "$(get_sysmond_pid)" ]; then
-    echo "ОШИБКА: sysmond не реагирует на SIGTERM"
+if [ "$TERMINATED" -eq 0 ]; then
+    echo "ОШИБКА: sysmond не реагирует на SIGTERM за 10 секунд"
+    echo "Принудительно убиваем через SIGKILL (дампа НЕ будет):"
+    ssh "$QNX_HOST" "kill -KILL $PID_BEFORE 2>/dev/null"
+    sleep 1
     exit 1
 fi
-echo "sysmond завершён."
 
 # ---- 5. Проверка файла дампа ----------------------------------------
 step "5. Проверка появления файла дампа"
