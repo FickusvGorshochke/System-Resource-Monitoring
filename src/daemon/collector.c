@@ -18,7 +18,23 @@
 #include <ctype.h>
 
 
-#define MAPINFO_BATCH 64
+/*
+ * Размер буфера mappings процесса для подсчёта vmem.
+ *
+ * Буфер размещается в bss-сегменте (см. g_mapinfo_buf ниже) — память
+ * выделяется один раз при загрузке процесса, никаких рантайм-аллокаций
+ * на горячем пути опроса. Это соответствует архитектурному принципу
+ * сервиса: фиксированный объём памяти, выделенный один раз при старте.
+ *
+ * 1024 * sizeof(procfs_mapinfo) ~= 40 КБ. Покрывает все реально
+ * наблюдавшиеся в системе процессы. Для процессов с числом mappings
+ * больше MAPINFO_MAX vmem подсчитывается частично — это документировано
+ * как известное ограничение в главе 4 диплома.
+ *
+ * Буфер используется только из единственного потока коллектора, поэтому
+ * не требует синхронизации.
+ */
+#define MAPINFO_MAX 1024
 
 struct collector_state {
     collector_config_t  cfg;
@@ -75,19 +91,43 @@ static void read_proc_name(int fd, pid_t pid, char *out, size_t out_size)
 }
 
 
+/*
+ * Статический буфер для запроса mappings процесса.
+ *
+ * Выделяется в bss-сегменте при загрузке процесса. Используется
+ * только из потока коллектора (единственного потребителя), поэтому
+ * не требует мьютекса. Соответствует архитектурному принципу сервиса:
+ * никаких рантайм-аллокаций на горячем пути.
+ */
+static procfs_mapinfo g_mapinfo_buf[MAPINFO_MAX];
+
+/*
+ * Подсчёт суммарного размера mappings процесса (vmem в КБ).
+ *
+ * Возвращает сумму sizes всех mappings, помещающихся в g_mapinfo_buf.
+ * Для процессов с числом mappings > MAPINFO_MAX результат частичный
+ * (учитываются только первые MAPINFO_MAX записей).
+ */
 static uint32_t read_proc_vmem_kb(int fd)
 {
-    procfs_mapinfo info[MAPINFO_BATCH];
-    int            num = 0;
+    int num = 0;
 
     if (devctl(fd, DCMD_PROC_MAPINFO,
-               info, sizeof(info), &num) != EOK) {
+               g_mapinfo_buf, sizeof(g_mapinfo_buf), &num) != EOK) {
         return 0;
     }
 
+    /*
+     * Ядро возвращает в num общее число mappings процесса. Если оно
+     * превышает размер нашего буфера, в буфере лежат только первые
+     * MAPINFO_MAX записей — ограничиваем счётчик соответственно.
+     */
+    if (num > MAPINFO_MAX) num = MAPINFO_MAX;
+    if (num < 0)           num = 0;
+
     uint64_t total_bytes = 0;
     for (int i = 0; i < num; i++) {
-        total_bytes += info[i].size;
+        total_bytes += g_mapinfo_buf[i].size;
     }
     return (uint32_t)(total_bytes / 1024);
 }

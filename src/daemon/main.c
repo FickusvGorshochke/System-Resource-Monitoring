@@ -166,8 +166,10 @@ int main(int argc, char *argv[])
         dump_disabled ? "отключён" : dump_path);
 
     /* Сигналы — graceful shutdown */
-    struct sigaction sa = {0};
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
     sa.sa_handler = on_terminate;
+    sigemptyset(&sa.sa_mask);
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGINT,  &sa, NULL);
 
