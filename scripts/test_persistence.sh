@@ -1,22 +1,4 @@
 #!/bin/bash
-#
-# test_persistence.sh — тестирование механизма сохранения/загрузки
-# истории кольцевого буфера sysmond.
-#
-# Сценарий:
-#   1. Чистый старт sysmond.
-#   2. Накопление истории (DURATION_S сек).
-#   3. Запоминание счётчика записей.
-#   4. Отправка SIGTERM (graceful shutdown).
-#   5. Проверка появления файла дампа /var/log/sysmond_history.bin.
-#   6. Проверка валидности заголовка файла (магическое число SYSMOND).
-#   7. Перезапуск sysmond.
-#   8. Проверка, что история подгрузилась (по статистике и логу).
-#
-# Использование:
-#   ./test_persistence.sh                  # стандартный прогон
-#   ./test_persistence.sh -d 60            # 60 сек на накопление
-#   ./test_persistence.sh -h qnx2          # другой SSH alias
 
 set -u
 
@@ -48,7 +30,6 @@ echo "  Путь к дампу:        $DUMP_PATH"
 echo "============================================================"
 echo
 
-# ---- Проверка SSH ---------------------------------------------------
 if ! ssh -o ConnectTimeout=5 "$QNX_HOST" 'echo OK' >/dev/null 2>&1; then
     echo "ОШИБКА: нет связи с $QNX_HOST"
     exit 1
@@ -71,10 +52,8 @@ get_record_count() {
         | awk -F: '/Всего записей/ { gsub(/[ \t]/,"",$2); print $2 }'
 }
 
-# ---- 1. Очистка состояния -------------------------------------------
 step "1. Очистка предыдущего состояния"
 
-# Цикл: пытаемся остановить через TERM, проверяем, повторяем
 for attempt in 1 2 3 4 5; do
     OLD_PID=$(get_sysmond_pid)
     if [ -z "$OLD_PID" ]; then
@@ -86,8 +65,6 @@ for attempt in 1 2 3 4 5; do
     sleep 2
 done
 
-# Если после 5 попыток всё ещё жив — значит handler не работает,
-# тестировать дамп бесполезно. Прекращаем.
 LEFT_PID=$(get_sysmond_pid)
 if [ -n "$LEFT_PID" ]; then
     echo
@@ -111,7 +88,6 @@ ssh "$QNX_HOST" "rm -f $DUMP_PATH"
 echo "Проверка состояния перед стартом:"
 ssh "$QNX_HOST" "ls $DUMP_PATH 2>&1 | head -3"
 
-# ---- 2. Чистый запуск -----------------------------------------------
 step "2. Запуск sysmond с опцией -N (не загружать прошлый дамп)"
 ssh "$QNX_HOST" "/usr/bin/sysmond -p 1000 -N"
 sleep 2
@@ -123,7 +99,6 @@ if [ -z "$PID_BEFORE" ]; then
 fi
 echo "sysmond запущен, PID = $PID_BEFORE"
 
-# ---- 3. Накопление истории ------------------------------------------
 step "3. Накопление истории ($DURATION_S сек)"
 sleep "$DURATION_S"
 
@@ -133,12 +108,10 @@ echo "Записей в буфере перед остановкой: $COUNT_BEF
 
 ssh "$QNX_HOST" "/usr/bin/sysmon_cli stats 2>/dev/null"
 
-# ---- 4. Graceful shutdown через SIGTERM -----------------------------
 step "4. Корректное завершение через SIGTERM"
 echo "Посылаем SIGTERM в PID $PID_BEFORE..."
 ssh "$QNX_HOST" "kill -TERM $PID_BEFORE"
 
-# Ждём до 10 секунд завершения
 TERMINATED=0
 for waited in 1 2 3 4 5 6 7 8 9 10; do
     sleep 1
@@ -157,7 +130,6 @@ if [ "$TERMINATED" -eq 0 ]; then
     exit 1
 fi
 
-# ---- 5. Проверка файла дампа ----------------------------------------
 step "5. Проверка появления файла дампа"
 DUMP_LS=$(ssh "$QNX_HOST" "ls -la $DUMP_PATH 2>&1")
 echo "$DUMP_LS"
@@ -179,7 +151,6 @@ fi
 DUMP_SIZE=$(echo "$DUMP_LS" | awk '{print $5}')
 echo "Размер дампа: $DUMP_SIZE байт"
 
-# ---- 6. Проверка заголовка ------------------------------------------
 step "6. Проверка магического числа SYSMOND в заголовке"
 MAGIC=$(ssh "$QNX_HOST" "od -An -c -N 8 $DUMP_PATH" | tr -d ' \\\\0' | head -c 7)
 echo "Прочитано: '$MAGIC'"
@@ -196,11 +167,9 @@ echo
 echo "Заголовок (24 байта в hex+ascii):"
 ssh "$QNX_HOST" "od -A x -t x1z -N 24 $DUMP_PATH"
 
-# Расчёт ожидаемого числа записей: (size - 24) / 56
 RECORDS_IN_FILE=$(awk -v s="$DUMP_SIZE" 'BEGIN { print (s - 24) / 56 }')
 echo "Записей в файле (по размеру): $RECORDS_IN_FILE"
 
-# ---- 7. Перезапуск с подгрузкой -------------------------------------
 step "7. Перезапуск sysmond (без -N — должен подгрузить дамп)"
 ssh "$QNX_HOST" "rm -f /tmp/sysmond_persist.log"
 ssh "$QNX_HOST" "/usr/bin/sysmond -f -p 1000 > /tmp/sysmond_persist.log 2>&1 &"
@@ -214,7 +183,6 @@ if [ -z "$PID_AFTER" ]; then
 fi
 echo "sysmond запущен, PID = $PID_AFTER"
 
-# ---- 8. Проверка лога подгрузки -------------------------------------
 step "8. Проверка лога — есть ли строка 'Подгружено'"
 LOG=$(ssh "$QNX_HOST" "cat /tmp/sysmond_persist.log 2>/dev/null")
 echo "$LOG"
@@ -227,12 +195,10 @@ else
     echo "✗ Строка о подгрузке не найдена."
 fi
 
-# ---- 9. Проверка через stats ----------------------------------------
 step "9. Состояние буфера после перезагрузки"
 sleep 2
 ssh "$QNX_HOST" "/usr/bin/sysmon_cli stats 2>/dev/null"
 
-# ---- 10. Очистка ----------------------------------------------------
 step "10. Финальная очистка"
 ssh "$QNX_HOST" "kill -TERM $PID_AFTER 2>/dev/null; sleep 1"
 

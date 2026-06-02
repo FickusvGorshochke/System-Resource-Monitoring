@@ -1,17 +1,3 @@
-/*
- * sysmon_cli — клиентская утилита к /dev/sysmon.
- *
- * Команды:
- *   snapshot              — текущий снимок состояния потоков
- *   history [-p pid] [-t tid] [-n N]
- *                         — исторические данные с пагинацией
- *   stats                 — статистика сервиса
- *   config                — показать конфигурацию
- *   set [-p ms] [-H h] [-t N] [-P prio]
- *                         — изменить конфигурацию
- *   top                   — непрерывное обновление snapshot
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,7 +18,6 @@ static const char *state_str(uint8_t state)
     }
 }
 
-/* Имена raw STATE_* из <sys/neutrino.h> */
 static const char *blocked_str(uint16_t bt)
 {
     switch (bt) {
@@ -319,15 +304,6 @@ static int cmd_history(int argc, char *argv[])
     return 0;
 }
 
-/*
- * cpuns <pid> — вывести "<poll_timestamp_ns> <cpu_time_ns> <thread_count>"
- *
- * Возвращает сумму sutime_ns всех потоков указанного процесса из
- * последнего собранного снимка. timestamp — момент опроса (одинаковый
- * для всех записей этого опроса), а не время обработки запроса; это
- * важно для bench.sh, где разница (wall) и (cpu) должны быть взяты
- * из одной временной шкалы.
- */
 static int cmd_cpuns(int argc, char *argv[])
 {
     if (argc < 2) {
@@ -383,7 +359,7 @@ static int cmd_top(void)
     printf("Режим top — обновление каждую секунду. Ctrl+C для выхода.\n\n");
 
     for (;;) {
-        printf("\033[2J\033[H");      /* очистка экрана + курсор в (0,0) */
+        printf("\033[2J\033[H");
 
         int rc = cmd_snapshot();
         if (rc != 0) return rc;

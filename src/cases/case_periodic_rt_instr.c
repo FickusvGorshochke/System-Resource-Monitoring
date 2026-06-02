@@ -4,14 +4,15 @@
 #include <time.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <sys/trace.h>
+
+#define EV_START  910
+#define EV_WORK   911
+#define EV_SLEEP  912
 
 static volatile int g_running = 1;
 
-static void on_signal(int sig)
-{
-    (void)sig;
-    g_running = 0;
-}
+static void on_signal(int sig) { (void)sig; g_running = 0; }
 
 static uint64_t mono_ns(void)
 {
@@ -25,9 +26,7 @@ static void busy_for_ns(uint64_t ns)
     uint64_t start = mono_ns();
     volatile uint64_t acc = 0;
     while (mono_ns() - start < ns) {
-        for (int i = 0; i < 1000; i++) {
-            acc = acc * 1103515245ULL + 12345ULL;
-        }
+        for (int i = 0; i < 1000; i++) acc = acc * 1103515245ULL + 12345ULL;
     }
     (void)acc;
 }
@@ -46,10 +45,10 @@ int main(int argc, char *argv[])
     signal(SIGINT,  on_signal);
     signal(SIGTERM, on_signal);
 
-    fprintf(stderr, "case_periodic_rt: pid=%d period=%u мс work=%u мс\n",
+    fprintf(stderr, "case_periodic_rt_instr: pid=%d period=%u мс work=%u мс\n",
             (int)getpid(), period_ms, work_ms);
-    fprintf(stderr, "Ожидаемая нагрузка: ~%.1f%% CPU\n",
-            100.0 * work_ms / period_ms);
+
+    trace_logf(EV_START, "periodic start period=%u work=%u", period_ms, work_ms);
 
     uint64_t period_ns = (uint64_t)period_ms * 1000000ULL;
     uint64_t work_ns   = (uint64_t)work_ms   * 1000000ULL;
@@ -58,6 +57,7 @@ int main(int argc, char *argv[])
     uint32_t cycles    = 0;
 
     while (g_running) {
+        trace_logi(EV_WORK, cycles, work_ms);
         busy_for_ns(work_ns);
 
         uint64_t now = mono_ns();
@@ -67,16 +67,16 @@ int main(int argc, char *argv[])
                 .tv_sec  = (time_t)(sleep_ns / 1000000000ULL),
                 .tv_nsec = (long)  (sleep_ns % 1000000000ULL),
             };
+            trace_logi(EV_SLEEP, cycles, 0);
             nanosleep(&ts, NULL);
         }
         deadline += period_ns;
         cycles++;
 
-        if (seconds > 0 && (mono_ns() - start_ns) / 1000000000ULL >= (uint64_t)seconds) {
+        if (seconds > 0 && (mono_ns() - start_ns) / 1000000000ULL >= (uint64_t)seconds)
             break;
-        }
     }
 
-    fprintf(stderr, "case_periodic_rt: завершение, циклов=%u\n", cycles);
+    fprintf(stderr, "case_periodic_rt_instr: завершение, циклов=%u\n", cycles);
     return 0;
 }

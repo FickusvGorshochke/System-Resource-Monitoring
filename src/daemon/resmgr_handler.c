@@ -4,13 +4,12 @@
 #include <sys/dispatch.h>
 #include <sys/neutrino.h>
 #include <sys/stat.h>
-#include <sys/types.h>      
-#include <unistd.h>         
+#include <sys/types.h>
+#include <unistd.h>
 #include <time.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-
 
 static resmgr_connect_funcs_t g_connect_funcs;
 static resmgr_io_funcs_t      g_io_funcs;

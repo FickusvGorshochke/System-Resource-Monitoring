@@ -1,14 +1,3 @@
-/*
- * sysmond — сервис системного профилирования для ЗОСРВ "Нейтрино".
- *
- * Регистрирует /dev/sysmon, периодически опрашивает /proc, складывает
- * метрики в кольцевой буфер. Клиенты получают данные через devctl.
- *
- * При корректном завершении (SIGTERM / SIGINT) содержимое буфера
- * сохраняется в файл-дамп. При следующем запуске история подгружается
- * обратно, обеспечивая непрерывность наблюдения через рестарты.
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,10 +19,6 @@
 #define SYSMOND_LOG_PATH        "/var/log/sysmond.log"
 #define SYSMOND_DUMP_PATH       "/var/log/sysmond_history.bin"
 
-/*
- * Глобальные указатели на ring-буфер и путь дампа — нужны обработчику
- * сигнала, чтобы корректно сохранить буфер при завершении.
- */
 static ringbuf_t   *g_rb        = NULL;
 static const char  *g_dump_path = SYSMOND_DUMP_PATH;
 static volatile sig_atomic_t g_should_stop = 0;
@@ -41,7 +26,7 @@ static volatile sig_atomic_t g_should_stop = 0;
 static void on_terminate(int sig)
 {
     (void)sig;
-    /* Signal-safe вывод (write — async-signal-safe по POSIX) */
+
     static const char msg[] = "[signal: on_terminate]\n";
     write(2, msg, sizeof(msg) - 1);
     g_should_stop = 1;
@@ -163,7 +148,6 @@ int main(int argc, char *argv[])
         SYSMON_DEVICE_PATH,
         dump_disabled ? "отключён" : dump_path);
 
-    /* Сигналы — graceful shutdown */
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = on_terminate;
@@ -182,7 +166,6 @@ int main(int argc, char *argv[])
     g_rb        = &rb;
     g_dump_path = dump_path;
 
-    /* Подгружаем дамп предыдущего запуска, если есть */
     if (!load_disabled) {
         struct stat st;
         if (stat(dump_path, &st) == 0) {
@@ -233,13 +216,11 @@ int main(int argc, char *argv[])
     fprintf(stderr, "[4/4] Сервис готов.\n");
     resmgr_run(rm);
 
-    /* Маркер: вернулись из resmgr_run (signal-safe write до fflush) */
     {
         static const char msg[] = "[resmgr_run returned]\n";
         write(2, msg, sizeof(msg) - 1);
     }
 
-    /* Сохранение буфера на диск перед завершением */
     if (!dump_disabled) {
         fprintf(stderr, "Сохранение истории в %s... ", dump_path);
         fflush(stderr);

@@ -17,23 +17,6 @@
 #include <stdio.h>
 #include <ctype.h>
 
-
-/*
- * Размер буфера mappings процесса для подсчёта vmem.
- *
- * Буфер размещается в bss-сегменте (см. g_mapinfo_buf ниже) — память
- * выделяется один раз при загрузке процесса, никаких рантайм-аллокаций
- * на горячем пути опроса. Это соответствует архитектурному принципу
- * сервиса: фиксированный объём памяти, выделенный один раз при старте.
- *
- * 1024 * sizeof(procfs_mapinfo) ~= 40 КБ. Покрывает все реально
- * наблюдавшиеся в системе процессы. Для процессов с числом mappings
- * больше MAPINFO_MAX vmem подсчитывается частично — это документировано
- * как известное ограничение в главе 4 диплома.
- *
- * Буфер используется только из единственного потока коллектора, поэтому
- * не требует синхронизации.
- */
 #define MAPINFO_MAX 1024
 
 struct collector_state {
@@ -52,7 +35,6 @@ static uint64_t monotonic_ns(void)
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 }
 
-
 static uint8_t map_state(unsigned kernel_state)
 {
     switch (kernel_state) {
@@ -63,10 +45,6 @@ static uint8_t map_state(unsigned kernel_state)
     }
 }
 
-/*
- * Имя процесса — basename исполняемого файла из его первого mapping.
- * Если получить не удалось, имя формируется как "pid:N".
- */
 static void read_proc_name(int fd, pid_t pid, char *out, size_t out_size)
 {
     union {
@@ -90,24 +68,8 @@ static void read_proc_name(int fd, pid_t pid, char *out, size_t out_size)
     out[out_size - 1] = '\0';
 }
 
-
-/*
- * Статический буфер для запроса mappings процесса.
- *
- * Выделяется в bss-сегменте при загрузке процесса. Используется
- * только из потока коллектора (единственного потребителя), поэтому
- * не требует мьютекса. Соответствует архитектурному принципу сервиса:
- * никаких рантайм-аллокаций на горячем пути.
- */
 static procfs_mapinfo g_mapinfo_buf[MAPINFO_MAX];
 
-/*
- * Подсчёт суммарного размера mappings процесса (vmem в КБ).
- *
- * Возвращает сумму sizes всех mappings, помещающихся в g_mapinfo_buf.
- * Для процессов с числом mappings > MAPINFO_MAX результат частичный
- * (учитываются только первые MAPINFO_MAX записей).
- */
 static uint32_t read_proc_vmem_kb(int fd)
 {
     int num = 0;
@@ -117,11 +79,6 @@ static uint32_t read_proc_vmem_kb(int fd)
         return 0;
     }
 
-    /*
-     * Ядро возвращает в num общее число mappings процесса. Если оно
-     * превышает размер нашего буфера, в буфере лежат только первые
-     * MAPINFO_MAX записей — ограничиваем счётчик соответственно.
-     */
     if (num > MAPINFO_MAX) num = MAPINFO_MAX;
     if (num < 0)           num = 0;
 
@@ -132,11 +89,6 @@ static uint32_t read_proc_vmem_kb(int fd)
     return (uint32_t)(total_bytes / 1024);
 }
 
-/* Перебор потоков процесса согласно протоколу DCMD_PROC_TIDSTATUS:
- *  - выставляем нужный tid в запросе
- *  - ядро возвращает поток с tid >= запрошенного
- *  - tid == 0 в ответе — потоков больше нет
- */
 static void poll_threads(int fd, sysmon_record_t *rec, ringbuf_t *rb)
 {
     procfs_status thr;
@@ -170,7 +122,7 @@ static void poll_process(pid_t pid, uint64_t timestamp, ringbuf_t *rb)
     snprintf(path, sizeof(path), "/proc/%d/as", (int)pid);
     fd = open(path, O_RDONLY | O_NONBLOCK);
     if (fd < 0) {
-        return;  
+        return;
     }
 
     memset(&proc_info, 0, sizeof(proc_info));

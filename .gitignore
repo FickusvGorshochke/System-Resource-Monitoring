@@ -77,3 +77,13 @@ $RECYCLE.BIN/
 
 # Built Visual Studio Code Extensions
 *.vsix
+### Артефакты профилирования и сборки (исходники .c сохраняются)
+*.kev
+*_report.txt
+crash-*/
+/src/sysmond
+/src/sysmon_cli
+src/cases/case_*
+!src/cases/case_*.c
+/src/profiler/kev_profile
+/src/profiler/pin0

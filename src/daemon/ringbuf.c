@@ -55,7 +55,6 @@ void ringbuf_write(ringbuf_t *rb, const sysmon_record_t *rec)
     pthread_mutex_unlock(&rb->mutex);
 }
 
-
 static inline uint32_t slot_of(const ringbuf_t *rb, uint32_t i)
 {
     uint32_t tail = (rb->head + rb->capacity - rb->count) % rb->capacity;
@@ -162,17 +161,6 @@ void ringbuf_get_stats(ringbuf_t *rb,
     pthread_mutex_unlock(&rb->mutex);
 }
 
-/*
- * Формат файла-дампа:
- *   offset  size   field
- *   0       8      magic         = "SYSMOND\0"
- *   8       4      version       = 1
- *   12      4      record_size   = sizeof(sysmon_record_t)
- *   16      4      count         (число записей)
- *   20      4      reserved      = 0
- *   24      N*sz   records       (записи в хронологическом порядке)
- */
-
 #define DUMP_MAGIC    "SYSMOND\0"
 #define DUMP_VERSION  1
 #define DUMP_HDR_SIZE 24
@@ -205,7 +193,6 @@ int ringbuf_dump_to_file(ringbuf_t *rb, const char *path)
         return -1;
     }
 
-    /* Записи в хронологическом порядке: от хвоста к голове */
     uint32_t tail = (rb->head + rb->capacity - rb->count) % rb->capacity;
     for (uint32_t i = 0; i < rb->count; i++) {
         uint32_t slot = (tail + i) % rb->capacity;

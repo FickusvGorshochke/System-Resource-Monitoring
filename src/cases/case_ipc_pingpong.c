@@ -1,19 +1,3 @@
-/*
- * case_ipc_pingpong — нагрузка через QNX IPC (MsgSend/MsgReceive).
- *
- * Создаёт два потока:
- *   - server: ChannelCreate, MsgReceive (блокировка RECEIVE), MsgReply
- *   - client: ConnectAttach, MsgSend (блокировка REPLY)
- *
- * Ожидаемое поведение в sysmon_cli snapshot:
- *   - оба потока большую часть времени в состоянии BLOCKED
- *   - server с blocked_type RECEIVE
- *   - client с blocked_type REPLY
- *   - суммарный CPU% < 1% (вся работа — блокирующие IPC-вызовы)
- *
- * Запуск:  ./case_ipc_pingpong [seconds]
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
@@ -52,7 +36,7 @@ static void *server_thread(void *arg)
             MsgReply(rcvid, 0, "pong", 5);
             ctx->messages++;
         } else if (rcvid == 0) {
-            /* pulse — игнорируем */
+
         }
     }
     return NULL;
@@ -108,7 +92,6 @@ int main(int argc, char *argv[])
         while (g_running) sleep(1);
     }
 
-    /* Заставляем потоки выйти из блокирующих вызовов */
     ConnectDetach(coid);
     ChannelDestroy(chid);
 

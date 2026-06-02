@@ -1,10 +1,3 @@
-# Сборка case-программ для проверки sysmond.
-#
-# Использование:
-#   make           — собрать все 4 case-программы под x86
-#   make ARCH=...  — другая архитектура (см. ../Makefile)
-#   make deploy    — развернуть на цель через scp
-
 ARCH ?= x86
 
 ifeq ($(ARCH), x86)
@@ -20,10 +13,12 @@ endif
 CC     = qcc -V$(QCC_VARIANT)
 CFLAGS = -Wall -Wextra -std=c99 -D_QNX_SOURCE -O2
 
-CASES = case_cpu_burner       \
-        case_periodic_rt      \
-        case_ipc_pingpong     \
-        case_mutex_contention
+CASES = case_cpu_burner            case_cpu_burner_instr       \
+        case_periodic_rt           case_periodic_rt_instr      \
+        case_ipc_pingpong          case_ipc_pingpong_instr     \
+        case_mutex_contention      case_mutex_contention_instr \
+        case_prio_inversion        case_prio_inversion_instr   \
+        case_prod_cons             case_prod_cons_instr
 
 QNX_HOST_ALIAS ?= qnx
 

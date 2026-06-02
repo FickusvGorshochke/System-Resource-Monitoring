@@ -1,7 +1,3 @@
-/*
- * resmgr_handler.h — Resource Manager для /dev/sysmon.
- */
-
 #ifndef SYSMON_RESMGR_HANDLER_H
 #define SYSMON_RESMGR_HANDLER_H
 
@@ -31,4 +27,4 @@ resmgr_ctx_t *resmgr_init(ringbuf_t             *rb,
 void resmgr_run     (resmgr_ctx_t *ctx);
 void resmgr_shutdown(resmgr_ctx_t *ctx);
 
-#endif /* SYSMON_RESMGR_HANDLER_H */
+#endif

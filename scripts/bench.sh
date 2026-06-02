@@ -1,22 +1,4 @@
 #!/bin/bash
-#
-# bench.sh — измерение CPU overhead сервиса sysmond.
-#
-# Метрика — sutime_ns самих потоков sysmond, считанная через
-# sysmon_cli cpuns (наносекундная точность от ядра procfs).
-#
-# Особенности:
-#  * каждая конфигурация замеряется N_RUNS раз, печатается медиана;
-#  * длительность одного замера автоматически масштабируется так,
-#    чтобы в окно поместилось ≥ 10 опросов (при низких частотах
-#    окно становится длиннее, чем DURATION_S_MIN);
-#  * cpuns возвращает timestamp САМОГО опроса (а не времени запроса) —
-#    wall_ns и cpu_ns берутся из одной временной шкалы.
-#
-# Использование:
-#   ./bench.sh                           # стандартный прогон
-#   ./bench.sh -d 30 -n 5                # 30 сек × 5 повторений
-#   ./bench.sh -p 100,500,1000           # только указанные периоды
 
 set -u
 
@@ -59,10 +41,9 @@ fi
 
 get_sysmond_pid() {
     ssh "$QNX_HOST" "pidin -F '%a %N' 2>/dev/null \
-        | awk '\$2 == \"sysmond\" {print \$1; exit}'"
+        | awk '{n=\$2; sub(/.*\\//, \"\", n); if(n==\"sysmond\"){print \$1; exit}}'"
 }
 
-# Возвращает три числа: poll_timestamp_ns, sum_sutime_ns, thread_count
 get_cpu_data() {
     local pid="$1"
     ssh "$QNX_HOST" "/usr/bin/sysmon_cli cpuns $pid 2>/dev/null"
@@ -73,7 +54,6 @@ get_threads_total() {
         | awk -F: '/Потоков в последнем снимке/ { gsub(/ /,"",$2); print $2 }'
 }
 
-# median по списку чисел в %.4f формате
 median() {
     printf '%s\n' "$@" | sort -g | awk '
         { v[NR]=$0 }
@@ -91,7 +71,6 @@ printf "%-10s %-10s %-9s %-12s %-12s %-12s %-10s\n" \
     "------" "-------" "-------" "----------" "----------" "----------" "-------"
 
 for period in "${PERIODS[@]}"; do
-    # Окно ≥ DURATION_S_MIN, но не меньше чем 10 периодов опроса
     win_s=$(awk -v d="$DURATION_S_MIN" -v p="$period" '
         BEGIN {
             min_for_polls = 10 * p / 1000
@@ -104,7 +83,6 @@ for period in "${PERIODS[@]}"; do
         ssh "$QNX_HOST" "slay -f sysmond 2>/dev/null; sleep 1" >/dev/null
         ssh "$QNX_HOST" "/usr/bin/sysmond -p $period" >/dev/null
 
-        # Дать sysmond сделать минимум 2 опроса до начала измерения
         warmup=$(awk -v p="$period" 'BEGIN { printf "%.1f", 2 * p / 1000.0 + 1.0 }')
         sleep "$warmup"
 
@@ -136,7 +114,6 @@ for period in "${PERIODS[@]}"; do
         runs+=("$cpu_pct")
     done
 
-    # Числовые результаты для статистики
     valid_runs=()
     for v in "${runs[@]}"; do
         case "$v" in
@@ -177,7 +154,3 @@ echo "Колонки:"
 echo "  Окно(с)    — длительность одного замера (≥ 10 периодов опроса)"
 echo "  CPU% (med) — медиана по N_RUNS = $N_RUNS прогонам"
 echo "  min / max  — разброс между прогонами"
-echo
-echo "Целевые цифры из методики:"
-echo "  Период 1000 мс (1 Гц):  типично < 1% CPU"
-echo "  Период 100 мс  (10 Гц): типично 1-3% CPU"

@@ -1,9 +1,3 @@
-/*
- * ringbuf.h — потокобезопасный кольцевой буфер записей sysmon_record_t.
- *
- * При заполнении перезаписывает самые старые данные (overwrite-on-full).
- */
-
 #ifndef SYSMON_RINGBUF_H
 #define SYSMON_RINGBUF_H
 
@@ -32,7 +26,6 @@ uint32_t ringbuf_latest_snapshot(ringbuf_t       *rb,
 
 uint32_t ringbuf_latest_count(ringbuf_t *rb);
 
-
 uint32_t ringbuf_query(ringbuf_t       *rb,
                        uint64_t         from_ns,
                        uint64_t         to_ns,
@@ -49,18 +42,8 @@ void ringbuf_get_stats(ringbuf_t *rb,
                        uint64_t  *out_total_written,
                        uint64_t  *out_total_dropped);
 
-/*
- * Сохранить содержимое буфера в файл бинарного формата.
- * Формат: [магическое число "SYSMON" + версия + count + records...]
- * Возвращает 0 при успехе, -1 при ошибке (errno установлен).
- */
 int ringbuf_dump_to_file(ringbuf_t *rb, const char *path);
 
-/*
- * Загрузить содержимое из ранее сохранённого файла.
- * Записи добавляются в буфер обычным write (с возможной перезаписью
- * старых, если буфер мал). Возвращает число загруженных записей или -1.
- */
 int ringbuf_load_from_file(ringbuf_t *rb, const char *path);
 
-#endif /* SYSMON_RINGBUF_H */
+#endif

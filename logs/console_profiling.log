@@ -1,0 +1,27 @@
+qnx# ./pin0 ./ex_busy 8 &
+ex_busy: pid=10752043  (ограничено по времени)
+
+qnx# pidin | grep ex_busy
+10752043   1 ex_busy             10r RUNNING                                 
+
+qnx# tracelogger -s 2 -f /tmp/t.kev
+
+qnx# kev_profile /tmp/t.kev 10752043
+
+  tid=1  наблюдалось 0.957 c  (миграций между CPU: 1):
+      RUNNING      100.0%
+      READY          0.0%
+
+---
+
+qnx# ./pin0 ./ex_sleep 8 &
+ex_sleep: pid=10850347  (работа 20мс + сон 100мс в цикле)
+
+qnx# tracelogger -s 2 -f /tmp/t.kev
+
+qnx# kev_profile /tmp/t.kev 10850347
+
+  tid=1  наблюдалось 1.857 c  (миграций между CPU: 1):
+      RUNNING       17.0%
+      NANOSLEEP     83.0%
+      THCREATE       0.0%

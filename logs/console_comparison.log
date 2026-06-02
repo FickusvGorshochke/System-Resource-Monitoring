@@ -1,0 +1,33 @@
+qnx# ./pin0 ./case_ipc_pingpong 8 &
+case_ipc_pingpong: pid=10960939 chid=1 coid=1073741826
+
+qnx# tracelogger -s 2 -f /tmp/t.kev
+
+qnx# traceprinter -f /tmp/t.kev | grep -c CPU:
+2457134
+
+qnx# traceprinter -f /tmp/t.kev | awk -v target=10960939 -f /tmp/strace.awk | grep MSG | head -6
+CPU:00 KER_CALL:MSG_SENDV/11 coid:0x40000002 msg:"ping" (0x676e6970)
+CPU:00 KER_CALL:MSG_REPLYV/15 rcvid:0x00020003 status:0x00000000
+CPU:00 KER_EXIT:MSG_REPLYV/15 ret_val:0 empty:0x00000000
+CPU:00 KER_CALL:MSG_RECEIVEV/14 chid:0x00000001 rparts:1
+CPU:00 KER_EXIT:MSG_SENDV/11 status:0 rmsg:"pong" (0x676e6f70)
+CPU:00 KER_CALL:MSG_SENDV/11 coid:0x40000002 msg:"ping" (0x676e6970)
+
+qnx# kev_profile /tmp/t.kev 10960939
+
+  tid=1  наблюдалось 0.000 c  (миграций между CPU: 0):
+      THCREATE     100.0%
+
+  tid=2  наблюдалось 3.231 c  (миграций между CPU: 0):
+      RUNNING       32.8%
+      READY          0.2%
+      RECEIVE       67.0%
+      THCREATE       0.0%
+
+  tid=3  наблюдалось 3.231 c  (миграций между CPU: 0):
+      RUNNING       55.1%
+      READY         20.6%
+      SEND           0.0%
+      REPLY         24.3%
+      THCREATE       0.0%

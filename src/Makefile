@@ -1,20 +1,3 @@
-# Makefile для сервиса системного профилирования ЗОСРВ "Нейтрино" 2021.
-#
-# Использует qcc — рекомендованный КПДА драйвер компиляции.
-#
-# Использование:
-#   make                       — собрать всё (sysmond + sysmon_cli) для x86
-#   make ARCH=armv7            — для ARMv7
-#   make ARCH=aarch64          — для ARMv8
-#   make DEBUG=1               — отладочная сборка с символами
-#   make deploy                — собрать и развернуть на Нейтрино
-#   make clean                 — удалить артефакты
-#
-# Перед сборкой должны быть выставлены QNX_HOST и QNX_TARGET, например:
-#   export QNX_HOST=/opt/kpda2021a/host/linux64/x86_64
-#   export QNX_TARGET=/opt/kpda2021a/target/neutrino
-#   export PATH=$QNX_HOST/usr/bin:$PATH
-
 ARCH ?= x86
 
 ifeq ($(ARCH), x86)
@@ -39,7 +22,6 @@ ifdef DEBUG
 else
     CFLAGS += -O2
 endif
-
 
 LIBS_DAEMON =
 LIBS_CLI    =
