@@ -77,7 +77,6 @@ $RECYCLE.BIN/
 
 # Built Visual Studio Code Extensions
 *.vsix
-### Артефакты профилирования и сборки (исходники .c сохраняются)
 *.kev
 *_report.txt
 crash-*/
