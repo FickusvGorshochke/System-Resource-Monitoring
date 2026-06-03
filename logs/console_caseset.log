@@ -1,0 +1,129 @@
+
+qnx# ./pin0 ./case_cpu_burner 6 &
+case_cpu_burner: pid=11218988, длительность=6
+Запусти параллельно: sysmon_cli snapshot | grep case_cpu
+qnx# tracelogger -s 2 -f /tmp/t.kev
+qnx# kev_profile /tmp/t.kev 11218988
+
+  tid=1  наблюдалось 0.033 c  (миграций между CPU: 1):
+      RUNNING      100.0%
+      READY          0.0%
+
+
+qnx# ./pin0 ./case_periodic_rt 50 5 6 &
+case_periodic_rt: pid=11309101 period=50 мс work=5 мс
+Ожидаемая нагрузка: ~10.0% CPU
+qnx# tracelogger -s 2 -f /tmp/t.kev
+qnx# traceprinter -f /tmp/t.kev | awk -v target=11309101 -f /tmp/strace.awk | head -4
+CPU:00 KER_CALL:TIMER_TIMEOUT/75 timeout_flags:0x00001000 ntime(sec):0
+CPU:00 KER_EXIT:TIMER_TIMEOUT/75 prev_timeout_flags:0x00000000 otime(sec):0
+CPU:00 KER_CALL:TIMER_TIMEOUT/75 timeout_flags:0x00001000 ntime(sec):0
+CPU:00 KER_EXIT:TIMER_TIMEOUT/75 prev_timeout_flags:0x00000000 otime(sec):0
+qnx# kev_profile /tmp/t.kev 11309101
+
+  tid=1  наблюдалось 1.872 c  (миграций между CPU: 1):
+      RUNNING       12.2%
+      NANOSLEEP     87.8%
+
+
+qnx# ./pin0 ./case_ipc_pingpong 6 &
+case_ipc_pingpong: pid=11440172 chid=1 coid=1073741826
+qnx# tracelogger -s 2 -f /tmp/t.kev
+qnx# traceprinter -f /tmp/t.kev | awk -v target=11440172 -f /tmp/strace.awk | head -4
+CPU:00 KER_CALL:MSG_SENDV/11 coid:0x40000002 msg:"ping" (0x676e6970)
+CPU:00 KER_CALL:MSG_REPLYV/15 rcvid:0x00020003 status:0x00000000
+CPU:00 KER_EXIT:MSG_REPLYV/15 ret_val:0 empty:0x00000000
+CPU:00 KER_CALL:MSG_RECEIVEV/14 chid:0x00000001 rparts:1
+qnx# kev_profile /tmp/t.kev 11440172
+
+  tid=1  наблюдалось 0.000 c  (миграций между CPU: 0):
+      THCREATE     100.0%
+
+  tid=2  наблюдалось 5.691 c  (миграций между CPU: 0):
+      RUNNING       61.9%
+      READY          0.1%
+      RECEIVE       38.0%
+
+  tid=3  наблюдалось 5.691 c  (миграций между CPU: 0):
+      RUNNING       31.3%
+      READY         33.2%
+      REPLY         35.4%
+
+
+qnx# ./case_mutex_contention 4 6 &
+case_mutex_contention: pid=11567148 threads=4
+qnx# tracelogger -s 2 -f /tmp/t.kev
+qnx# traceprinter -f /tmp/t.kev | awk -v target=11567148 -f /tmp/strace.awk | head -4
+CPU:02 KER_CALL:SYNC_MUTEX_UNLOCK/81 sync_p:804a050 owner:2150367234
+CPU:02 KER_EXIT:SYNC_MUTEX_UNLOCK/81 ret_val:0 empty:0x00000000
+CPU:00 KER_EXIT:SYNC_MUTEX_LOCK/80 ret_val:0 empty:0x00000000
+CPU:02 KER_CALL:SYNC_MUTEX_LOCK/80 sync_p:804a050 owner:2150367235
+qnx# kev_profile /tmp/t.kev 11567148
+
+  tid=1  наблюдалось 0.000 c  (миграций между CPU: 0):
+      THCREATE     100.0%
+
+  tid=2  наблюдалось 1.087 c  (миграций между CPU: 34800):
+      RUNNING       44.9%
+      READY         26.2%
+      MUTEX         29.0%
+
+  tid=3  наблюдалось 1.378 c  (миграций между CPU: 34824):
+      RUNNING       35.7%
+      READY         20.6%
+      MUTEX         43.7%
+
+  tid=4  наблюдалось 1.083 c  (миграций между CPU: 34928):
+      RUNNING       44.6%
+      READY         26.2%
+      MUTEX         29.2%
+
+  tid=5  наблюдалось 1.093 c  (миграций между CPU: 34792):
+      RUNNING       44.9%
+      READY         26.0%
+      MUTEX         29.0%
+
+
+qnx# ./pin0 ./case_prod_cons 6 20 &
+case_prod_cons: pid=11690028 буфер=4 период_произв=20мс
+qnx# tracelogger -s 2 -f /tmp/t.kev
+qnx# kev_profile /tmp/t.kev 11690028
+
+  tid=1  наблюдалось 0.000 c  (миграций между CPU: 0):
+      THCREATE     100.0%
+
+  tid=2  наблюдалось 1.961 c  (миграций между CPU: 1):
+      RUNNING        0.2%
+      NANOSLEEP     99.8%
+
+  tid=3  наблюдалось 1.961 c  (миграций между CPU: 1):
+      RUNNING        0.1%
+      READY          0.1%
+      SEM           99.9%
+
+
+qnx# tracelogger -s 5 -f /tmp/t.kev &   ./case_prio_inversion 200 3000
+case_prio_inversion: pid=11788332 наследование=выкл (L=14 M=16 H=20, крит.секция=200мс, загрузка M=3000мс)
+  [L] prio=14 policy=2 runmask=0x1
+  [H] prio=20 policy=2 runmask=0x1
+  [M] prio=16 policy=2 runmask=0x1
+  H ждал мьютекс: 3049.5 мс
+case_prio_inversion: завершение
+qnx# kev_profile /tmp/t.kev 11788332  
+
+  tid=1  наблюдалось 4.312 c  (миграций между CPU: 40):
+      RUNNING        0.1%
+      REPLY         28.9%
+      NANOSLEEP      1.2%
+      JOIN          69.6%
+      SEM            0.1%
+
+  tid=2  наблюдалось 3.056 c  (миграций между CPU: 6):
+      RUNNING        1.6%
+      READY         98.4%
+
+  tid=3  наблюдалось 3.053 c  (миграций между CPU: 4):
+      MUTEX         99.9%
+
+  tid=4  наблюдалось 3.001 c  (миграций между CPU: 4):
+      RUNNING      100.0%
